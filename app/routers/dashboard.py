@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role
@@ -91,8 +91,8 @@ def get_location_aggregates(
         db.query(
             Child.village,
             func.count(Scan.id).label("total"),
-            func.sum(func.case((Scan.risk_band == "MAM", 1), else_=0)).label("mam"),
-            func.sum(func.case((Scan.risk_band == "SAM", 1), else_=0)).label("sam"),
+            func.sum(case((Scan.risk_band == "MAM", 1), else_=0)).label("mam"),
+            func.sum(case((Scan.risk_band == "SAM", 1), else_=0)).label("sam"),
         )
         .join(Scan, Scan.child_id == Child.id)
         .group_by(Child.village)

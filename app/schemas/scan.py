@@ -1,5 +1,5 @@
 from typing import Optional, List, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class ScanResultResponse(BaseModel):
@@ -11,8 +11,7 @@ class ScanResultResponse(BaseModel):
     confidence_score: float
     created_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SyncScanMetadata(BaseModel):
