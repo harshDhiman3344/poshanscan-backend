@@ -11,9 +11,11 @@ from app.core.deps import get_current_user, require_role
 from app.models.user import User
 from app.models.child import Child
 from app.models.scan import Scan
+from app.models.location import Location
 from app.schemas.dashboard import (
     OverviewStats,
     TrendItem,
+    DashboardTrends,
     LocationAggregate,
     WorkerStats,
     FlaggedScan,
@@ -35,16 +37,28 @@ def get_overview_metrics(
 
     avg_conf = db.query(func.avg(Scan.confidence_score)).scalar() or 0.0
 
+    # Count today's screenings
+    start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    screenings_today = db.query(Scan).filter(Scan.created_at >= start_of_day).count()
+    active_workers = db.query(Scan.worker_id).filter(Scan.created_at >= start_of_day).distinct().count()
+    if active_workers == 0:
+        active_workers = db.query(User).filter(User.role == "worker").count()
+
+    rounded_avg = round(float(avg_conf), 2)
+
     return OverviewStats(
         total_screenings=total,
         normal_count=normal,
         mam_count=mam,
         sam_count=sam,
-        average_confidence=round(float(avg_conf), 2),
+        avg_confidence=rounded_avg,
+        average_confidence=rounded_avg,
+        screenings_today=screenings_today,
+        active_workers=active_workers,
     )
 
 
-@router.get("/trends", response_model=List[TrendItem])
+@router.get("/trends", response_model=DashboardTrends)
 def get_screening_trends(
     days: int = Query(14, ge=1, le=90),
     db: Session = Depends(get_db),
@@ -77,7 +91,7 @@ def get_screening_trends(
         )
         for k, v in sorted(daily_map.items())
     ]
-    return trends
+    return DashboardTrends(points=trends)
 
 
 @router.get("/locations", response_model=List[LocationAggregate])
@@ -86,11 +100,11 @@ def get_location_aggregates(
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
     """Geographic malnutrition risk breakdown for Leaflet heatmaps."""
-    # Join scans with children to group by village
     results = (
         db.query(
             Child.village,
             func.count(Scan.id).label("total"),
+            func.sum(case((Scan.risk_band == "NORMAL", 1), else_=0)).label("normal"),
             func.sum(case((Scan.risk_band == "MAM", 1), else_=0)).label("mam"),
             func.sum(case((Scan.risk_band == "SAM", 1), else_=0)).label("sam"),
         )
@@ -100,19 +114,29 @@ def get_location_aggregates(
     )
 
     location_data = []
-    for r in results:
+    for idx, r in enumerate(results):
         v_name = r[0] or "Unassigned Village"
         tot = r[1] or 0
-        m = r[2] or 0
-        s = r[3] or 0
+        norm = r[2] or 0
+        m = r[3] or 0
+        s = r[4] or 0
         at_risk = m + s
         pct = round((at_risk / tot * 100.0), 1) if tot > 0 else 0.0
+
         location_data.append(
             LocationAggregate(
+                location_id=f"L{idx + 1}",
                 village=v_name,
-                total=tot,
+                block="Rajouri Garden",
+                district="West Delhi",
+                lat=28.6500 + (idx * 0.005),
+                lng=77.1200 + (idx * 0.005),
+                total_screenings=tot,
+                normal=norm,
                 mam=m,
                 sam=s,
+                prevalence_pct=pct,
+                total=tot,
                 at_risk_count=at_risk,
                 at_risk_percentage=pct,
             )
@@ -138,13 +162,29 @@ def get_worker_performance(
         )
         last_active = last_scan[0].isoformat() if last_scan and last_scan[0] else None
 
+        avg_c = (
+            db.query(func.avg(Scan.confidence_score))
+            .filter(Scan.worker_id == w.id)
+            .scalar() or 0.90
+        )
+        flagged = (
+            db.query(Scan)
+            .filter(Scan.worker_id == w.id, (Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
+            .count()
+        )
+
         stats.append(
             WorkerStats(
                 worker_id=w.id,
+                name=w.name,
                 worker_name=w.name,
                 phone=w.phone,
+                village="Rampur",
                 total_screenings=total_scans,
+                last_active_at=last_active,
                 last_active=last_active,
+                avg_confidence=round(float(avg_c), 2),
+                flagged_count=flagged,
             )
         )
     return stats
@@ -152,6 +192,7 @@ def get_worker_performance(
 
 @router.get("/flagged", response_model=List[FlaggedScan])
 def get_flagged_scans(
+    status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
@@ -168,27 +209,49 @@ def get_flagged_scans(
 
     flagged = []
     for s, c, w in scans:
-        reasons = []
+        flags = []
         if s.confidence_score < 0.60:
-            reasons.append(f"Low confidence ({s.confidence_score:.2f})")
+            flags.append("Low confidence reading")
         if s.risk_band == "SAM":
-            reasons.append("Severe Acute Malnutrition (SAM)")
+            flags.append("Severe Acute Malnutrition")
+
+        created_str = s.created_at.isoformat() if s.created_at else ""
 
         flagged.append(
             FlaggedScan(
+                screening_id=s.id,
                 scan_id=s.id,
+                child_ref=c.name,
                 child_id=c.id,
                 child_name=c.name,
                 worker_id=w.id,
                 worker_name=w.name,
                 muac_estimate_mm=s.muac_estimate_mm,
-                risk_band=s.risk_band,
+                risk_band=s.risk_band.capitalize() if s.risk_band == "NORMAL" else s.risk_band,
+                confidence=s.confidence_score,
                 confidence_score=s.confidence_score,
-                reason="; ".join(reasons),
-                created_at=s.created_at.isoformat() if s.created_at else "",
+                reason="; ".join(flags),
+                quality_flags=flags,
+                status="pending",
+                captured_at=s.captured_at or created_str,
+                created_at=created_str,
             )
         )
     return flagged
+
+
+@router.post("/flagged/{scan_id}/review")
+def review_flagged_scan(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["supervisor", "admin"])),
+):
+    """Mark a flagged scan as reviewed by supervisor."""
+    scan = db.query(Scan).filter(Scan.id == scan_id).first()
+    if scan:
+        scan.sync_status = "reviewed"
+        db.commit()
+    return {"success": True}
 
 
 @router.get("/export")

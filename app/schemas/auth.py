@@ -9,7 +9,9 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     access_token: str
+    token: str          # For Dhruv's dashboard
     role: str
+    name: str           # For Dhruv's dashboard
     user_id: str
 
 

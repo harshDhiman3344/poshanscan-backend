@@ -28,7 +28,8 @@ def test_dashboard_trends(client, supervisor_token):
         headers={"Authorization": f"Bearer {supervisor_token}"},
     )
     assert response.status_code == 200
-    assert isinstance(response.json(), list)
+    assert "points" in response.json()
+    assert isinstance(response.json()["points"], list)
 
 
 def test_dashboard_locations(client, supervisor_token):
