@@ -22,10 +22,29 @@ logger = logging.getLogger("poshanscan-backend")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database tables on application startup."""
+    """Initialize database tables on application startup and auto-seed if empty."""
     logger.info("Initializing database tables...")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
+
+    # Auto-seed if database has no users yet (e.g. fresh Supabase / Render deployment)
+    try:
+        from app.models.user import User
+        from app.core.database import SessionLocal
+        from seed import seed
+        db = SessionLocal()
+        try:
+            if db.query(User).count() == 0:
+                logger.info("Database empty on startup. Automatically seeding default accounts...")
+                seed()
+                logger.info("Auto-seeding complete.")
+            else:
+                logger.info("Database already seeded.")
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning(f"Auto-seed check encountered an issue: {exc}")
+
     yield
 
 
