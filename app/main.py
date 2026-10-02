@@ -27,19 +27,20 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
 
-    # Auto-seed if database has no users yet (e.g. fresh Supabase / Render deployment)
+    # Auto-seed if database has less than 50 scans (e.g. fresh deployment or needs enriched demo dataset)
     try:
-        from app.models.user import User
+        from app.models.scan import Scan
         from app.core.database import SessionLocal
         from seed import seed
         db = SessionLocal()
         try:
-            if db.query(User).count() == 0:
-                logger.info("Database empty on startup. Automatically seeding default accounts...")
+            scan_count = db.query(Scan).count()
+            if scan_count < 50:
+                logger.info(f"Database has only {scan_count} scans. Automatically seeding enriched multi-worker dataset...")
                 seed()
                 logger.info("Auto-seeding complete.")
             else:
-                logger.info("Database already seeded.")
+                logger.info(f"Database already seeded with {scan_count} screenings.")
         finally:
             db.close()
     except Exception as exc:
