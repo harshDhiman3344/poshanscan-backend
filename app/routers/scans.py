@@ -25,12 +25,13 @@ async def submit_scan(
     captured_at: Optional[str] = Form(None),
     reference_type: str = Form("aruco"),
     reference_size_mm: float = Form(50.0),
+    age_category: str = Form("child_6_59m"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Submit a single online scan.
-    Receives image + metadata, forwards to Yash's CV service, saves to DB,
+    Receives image + metadata + age_category, forwards to Yash's CV service, saves to DB,
     and returns ScanResultResponse matching Navya's frontend contract.
     """
     # 1. Verify child exists
@@ -40,6 +41,9 @@ async def submit_scan(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Child record not found.",
         )
+
+    # Normalize age category: "adult" or "child_6_59m"
+    norm_age = "adult" if str(age_category).strip().lower() == "adult" else "child_6_59m"
 
     # 2. Read image content and save to storage
     image_bytes = await image.read()
@@ -52,6 +56,7 @@ async def submit_scan(
             filename=image.filename or "scan.jpg",
             reference_type=reference_type,
             reference_size_mm=reference_size_mm,
+            age_category=norm_age,
         )
     except CVInferenceError as exc:
         return JSONResponse(
@@ -74,6 +79,7 @@ async def submit_scan(
         child_id=child_id,
         worker_id=current_user.id,
         image_path=image_path,
+        age_category=norm_age,
         muac_estimate_mm=cv_result.muac_estimate_mm,
         risk_band=normalized_band,
         confidence_score=cv_result.confidence_score,
@@ -91,6 +97,7 @@ async def submit_scan(
         scan_id=scan_record.id,
         client_scan_id=scan_record.client_scan_id,
         child_id=scan_record.child_id,
+        age_category=scan_record.age_category,
         muac_estimate_mm=scan_record.muac_estimate_mm,
         risk_band=scan_record.risk_band,
         confidence_score=scan_record.confidence_score,

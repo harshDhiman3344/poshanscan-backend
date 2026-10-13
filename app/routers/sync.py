@@ -58,6 +58,8 @@ async def sync_offline_scans(
         captured_at = item.get("captured_at")
         ref_type = item.get("reference_type", "aruco")
         ref_size = float(item.get("reference_size_mm", 50.0))
+        raw_age = item.get("age_category", "child_6_59m") or "child_6_59m"
+        norm_age = "adult" if str(raw_age).strip().lower() == "adult" else "child_6_59m"
 
         # Check for idempotency: if this client_scan_id already exists in DB, return existing record
         if client_scan_id:
@@ -73,6 +75,7 @@ async def sync_offline_scans(
                         client_scan_id=client_scan_id,
                         scan_id=existing.id,
                         child_id=existing.child_id,
+                        age_category=existing.age_category or "child_6_59m",
                         muac_estimate_mm=existing.muac_estimate_mm,
                         risk_band=existing.risk_band,
                         confidence_score=existing.confidence_score,
@@ -102,6 +105,7 @@ async def sync_offline_scans(
                 filename=img.filename or f"{client_scan_id}.jpg",
                 reference_type=ref_type,
                 reference_size_mm=ref_size,
+                age_category=norm_age,
             )
 
             raw_band = (cv_res.risk_band or "NORMAL").upper()
@@ -112,6 +116,7 @@ async def sync_offline_scans(
                 child_id=child_id,
                 worker_id=worker_id,
                 image_path=image_path,
+                age_category=norm_age,
                 muac_estimate_mm=cv_res.muac_estimate_mm,
                 risk_band=normalized_band,
                 confidence_score=cv_res.confidence_score,
@@ -134,6 +139,7 @@ async def sync_offline_scans(
                     client_scan_id=client_scan_id,
                     scan_id=scan_rec.id,
                     child_id=scan_rec.child_id,
+                    age_category=scan_rec.age_category,
                     muac_estimate_mm=scan_rec.muac_estimate_mm,
                     risk_band=scan_rec.risk_band,
                     confidence_score=scan_rec.confidence_score,

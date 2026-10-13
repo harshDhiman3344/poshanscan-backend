@@ -64,6 +64,7 @@ class FlaggedScan(BaseModel):
     child_name: Optional[str] = None
     worker_id: Optional[str] = None
     worker_name: str
+    age_category: str = "child_6_59m"
     muac_estimate_mm: float
     risk_band: str
     confidence: float

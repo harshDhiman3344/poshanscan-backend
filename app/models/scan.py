@@ -12,6 +12,7 @@ class Scan(Base):
     child_id = Column(String(36), ForeignKey("children.id"), nullable=False, index=True)
     worker_id = Column(String(36), ForeignKey("users.id"), nullable=False, index=True)
     image_path = Column(String(255), nullable=True)
+    age_category = Column(String(20), default="child_6_59m", nullable=False)  # child_6_59m, adult
     muac_estimate_mm = Column(Float, nullable=False)
     risk_band = Column(String(20), nullable=False)  # NORMAL, MAM, SAM
     confidence_score = Column(Float, nullable=False)

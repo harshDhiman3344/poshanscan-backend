@@ -23,6 +23,7 @@ async def run_cv_inference(
     filename: str = "scan.jpg",
     reference_type: str = "aruco",
     reference_size_mm: float = 50.0,
+    age_category: str = "child_6_59m",
 ) -> CVInferResponse:
     """
     Call Yash's Computer Vision microservice (/infer) or generate a mock result.
@@ -35,17 +36,30 @@ async def run_cv_inference(
             message="No image data provided.",
         )
 
+    # Normalize age category: "adult" or "child_6_59m"
+    norm_age = "adult" if str(age_category).strip().lower() == "adult" else "child_6_59m"
+
     # 1. Fallback Mock Mode (for local development when ML service is offline)
     if settings.MOCK_CV:
-        logger.info("MOCK_CV is enabled: generating simulated CV inference result.")
-        # Generate realistic MUAC between 105mm and 135mm
-        muac = round(random.uniform(108.0, 134.0), 1)
-        if muac < 115.0:
-            risk_band = "SAM"
-        elif muac < 125.0:
-            risk_band = "MAM"
+        logger.info("MOCK_CV is enabled: generating simulated CV inference result for %s.", norm_age)
+        if norm_age == "adult":
+            # Adult scale: below 210mm severe (SAM), 210-229mm moderate (MAM), 230mm and above normal
+            muac = round(random.uniform(200.0, 260.0), 1)
+            if muac < 210.0:
+                risk_band = "SAM"
+            elif muac < 230.0:
+                risk_band = "MAM"
+            else:
+                risk_band = "Normal"
         else:
-            risk_band = "Normal"
+            # Child (6-59 months) scale: below 115mm severe (SAM), 115-124.9mm moderate (MAM), 125mm and above normal
+            muac = round(random.uniform(108.0, 134.0), 1)
+            if muac < 115.0:
+                risk_band = "SAM"
+            elif muac < 125.0:
+                risk_band = "MAM"
+            else:
+                risk_band = "Normal"
 
         return CVInferResponse(
             muac_estimate_mm=muac,
@@ -57,11 +71,12 @@ async def run_cv_inference(
                 segmentation_ok=True,
             ),
             pipeline_version="v1.0-mock",
+            age_category=norm_age,
         )
 
     # 2. Live HTTP Request to Yash's Service
     url = f"{settings.CV_SERVICE_URL.rstrip('/')}/infer"
-    logger.info("Calling remote CV service at %s", url)
+    logger.info("Calling remote CV service at %s with age_category=%s", url, norm_age)
 
     files = {
         "image": (filename, image_bytes, "image/jpeg"),
@@ -69,6 +84,7 @@ async def run_cv_inference(
     data = {
         "reference_type": reference_type,
         "reference_size_mm": str(reference_size_mm),
+        "age_category": norm_age,
     }
 
     try:
@@ -84,6 +100,7 @@ async def run_cv_inference(
 
     if response.status_code == 200:
         payload = response.json()
+        payload.setdefault("age_category", norm_age)
         return CVInferResponse(**payload)
 
     # Error handling from Yash's API (422 / 500)

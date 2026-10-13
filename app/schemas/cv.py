@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -13,6 +14,7 @@ class CVInferResponse(BaseModel):
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     quality_flags: CVQualityFlags
     pipeline_version: str = "v1.0"
+    age_category: Optional[str] = "child_6_59m"
 
 
 class CVErrorResponse(BaseModel):

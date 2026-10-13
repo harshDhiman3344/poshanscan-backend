@@ -24,23 +24,42 @@ from app.schemas.dashboard import (
 router = APIRouter(prefix="/dashboard", tags=["Supervisor Dashboard"])
 
 
+def apply_age_filter(query, age_category: Optional[str]):
+    """Filter scans by age category. Defaults to child_6_59m so adult demo scans don't distort dashboard metrics."""
+    target = (age_category or "child_6_59m").strip().lower()
+    if target == "adult":
+        return query.filter(Scan.age_category == "adult")
+    elif target in ("child", "child_6_59m"):
+        return query.filter((Scan.age_category == "child_6_59m") | (Scan.age_category.is_(None)))
+    elif target == "all":
+        return query
+    return query.filter((Scan.age_category == "child_6_59m") | (Scan.age_category.is_(None)))
+
+
 @router.get("/overview", response_model=OverviewStats)
 def get_overview_metrics(
+    age_category: Optional[str] = Query(None, description="Age category filter ('child_6_59m', 'adult', 'all'). Defaults to child_6_59m"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Overall screening statistics for supervisor dashboard."""
-    total = db.query(Scan).count()
-    normal = db.query(Scan).filter(Scan.risk_band == "NORMAL").count()
-    mam = db.query(Scan).filter(Scan.risk_band == "MAM").count()
-    sam = db.query(Scan).filter(Scan.risk_band == "SAM").count()
+    """Overall screening statistics for supervisor dashboard (defaults to child scans)."""
+    base_query = apply_age_filter(db.query(Scan), age_category)
+    total = base_query.count()
+    normal = base_query.filter(Scan.risk_band == "NORMAL").count()
+    mam = base_query.filter(Scan.risk_band == "MAM").count()
+    sam = base_query.filter(Scan.risk_band == "SAM").count()
 
-    avg_conf = db.query(func.avg(Scan.confidence_score)).scalar() or 0.0
+    avg_conf = base_query.with_entities(func.avg(Scan.confidence_score)).scalar() or 0.0
 
     # Count today's screenings
     start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    screenings_today = db.query(Scan).filter(Scan.created_at >= start_of_day).count()
-    active_workers = db.query(Scan.worker_id).filter(Scan.created_at >= start_of_day).distinct().count()
+    screenings_today = base_query.filter(Scan.created_at >= start_of_day).count()
+    active_workers = (
+        base_query.filter(Scan.created_at >= start_of_day)
+        .with_entities(Scan.worker_id)
+        .distinct()
+        .count()
+    )
     if active_workers == 0:
         active_workers = db.query(User).filter(User.role == "worker").count()
 
@@ -65,10 +84,11 @@ def get_screening_trends(
     to_date: Optional[str] = Query(None, alias="to"),
     group_by: Optional[str] = Query(None),
     interval: Optional[str] = Query(None),
+    age_category: Optional[str] = Query(None, description="Age category filter ('child_6_59m', 'adult', 'all'). Defaults to child_6_59m"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Daily time-series screening numbers for Recharts visualization."""
+    """Daily time-series screening numbers for Recharts visualization (excludes adult scans by default)."""
     now = datetime.now(timezone.utc)
     if from_date:
         try:
@@ -86,7 +106,8 @@ def get_screening_trends(
     else:
         end_dt = now
 
-    scans = db.query(Scan).filter(Scan.created_at >= start_dt, Scan.created_at <= end_dt).all()
+    base_query = apply_age_filter(db.query(Scan), age_category)
+    scans = base_query.filter(Scan.created_at >= start_dt, Scan.created_at <= end_dt).all()
 
     # Pre-fill all days in range to ensure continuous chart line
     daily_map = {}
@@ -122,20 +143,21 @@ def get_screening_trends(
 
 @router.get("/locations", response_model=List[LocationAggregate])
 def get_location_aggregates(
+    age_category: Optional[str] = Query(None, description="Age category filter. Defaults to child_6_59m"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Geographic malnutrition risk breakdown for Leaflet heatmaps."""
+    """Geographic malnutrition risk breakdown for Leaflet heatmaps (excludes adult scans by default)."""
     locations = db.query(Location).all()
     location_data = []
 
     for idx, loc in enumerate(locations):
-        scans = (
+        scans_q = (
             db.query(Scan)
             .join(Child, Scan.child_id == Child.id)
             .filter(Child.village == loc.village)
-            .all()
         )
+        scans = apply_age_filter(scans_q, age_category).all()
         tot = len(scans)
         norm = sum(1 for s in scans if s.risk_band == "NORMAL")
         m = sum(1 for s in scans if s.risk_band == "MAM")
@@ -169,30 +191,29 @@ def get_location_aggregates(
 
 @router.get("/workers", response_model=List[WorkerStats])
 def get_worker_performance(
+    age_category: Optional[str] = Query(None, description="Age category filter. Defaults to child_6_59m"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Worker activity and screening counts."""
+    """Worker activity and screening counts (defaults to child scans)."""
     workers = db.query(User).filter(User.role == "worker").all()
     stats = []
     for w in workers:
-        total_scans = db.query(Scan).filter(Scan.worker_id == w.id).count()
+        base_q = apply_age_filter(db.query(Scan).filter(Scan.worker_id == w.id), age_category)
+        total_scans = base_q.count()
         last_scan = (
-            db.query(Scan.created_at)
-            .filter(Scan.worker_id == w.id)
+            base_q.with_entities(Scan.created_at)
             .order_by(Scan.created_at.desc())
             .first()
         )
         last_active = last_scan[0].isoformat() if last_scan and last_scan[0] else datetime.now(timezone.utc).isoformat()
 
         avg_c = (
-            db.query(func.avg(Scan.confidence_score))
-            .filter(Scan.worker_id == w.id)
+            base_q.with_entities(func.avg(Scan.confidence_score))
             .scalar() or 0.92
         )
         flagged = (
-            db.query(Scan)
-            .filter(Scan.worker_id == w.id, (Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
+            base_q.filter((Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
             .count()
         )
 
@@ -222,10 +243,11 @@ def get_worker_performance(
 @router.get("/flagged", response_model=List[FlaggedScan])
 def get_flagged_scans(
     status: Optional[str] = Query(None),
+    age_category: Optional[str] = Query(None, description="Filter by age category ('child_6_59m', 'adult', 'all')"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Scans requiring manual review (confidence < 0.60 or SAM)."""
+    """Scans requiring manual review (confidence < 0.60 or SAM). Shows age_category for each scan."""
     query = (
         db.query(Scan, Child, User)
         .join(Child, Scan.child_id == Child.id)
@@ -237,6 +259,13 @@ def get_flagged_scans(
         query = query.filter(Scan.sync_status == "reviewed")
     elif status == "pending":
         query = query.filter(Scan.sync_status != "reviewed")
+
+    if age_category:
+        norm_cat = age_category.strip().lower()
+        if norm_cat == "adult":
+            query = query.filter(Scan.age_category == "adult")
+        elif norm_cat in ("child", "child_6_59m"):
+            query = query.filter((Scan.age_category == "child_6_59m") | (Scan.age_category.is_(None)))
 
     scans = query.order_by(Scan.created_at.desc()).limit(50).all()
 
@@ -270,6 +299,7 @@ def get_flagged_scans(
                 child_name=c.name,
                 worker_id=w.id,
                 worker_name=w.name,
+                age_category=s.age_category or "child_6_59m",
                 muac_estimate_mm=s.muac_estimate_mm,
                 risk_band=s.risk_band.capitalize() if s.risk_band == "NORMAL" else s.risk_band,
                 confidence=s.confidence_score,
@@ -316,6 +346,7 @@ def export_screenings_csv(
         "Village",
         "Worker ID",
         "Worker Name",
+        "Age Category",
         "MUAC (mm)",
         "Risk Band",
         "Confidence Score",
@@ -341,6 +372,7 @@ def export_screenings_csv(
             c.village or "",
             w.id,
             w.name,
+            s.age_category or "child_6_59m",
             s.muac_estimate_mm,
             s.risk_band,
             s.confidence_score,

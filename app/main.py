@@ -27,6 +27,10 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
 
+    # Apply database schema migrations (e.g. age_category column on SQLite & PostgreSQL)
+    from app.core.migration import run_migrations
+    run_migrations(engine)
+
     # Auto-seed if database has less than 50 scans (e.g. fresh deployment or needs enriched demo dataset)
     try:
         from app.models.scan import Scan

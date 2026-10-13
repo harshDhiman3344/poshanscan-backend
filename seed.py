@@ -2,6 +2,7 @@ from datetime import datetime, timezone, timedelta
 import random
 from app.core.database import Base, engine, SessionLocal
 from app.core.security import get_password_hash
+from app.core.migration import run_migrations
 from app.models.user import User
 from app.models.location import Location
 from app.models.child import Child
@@ -11,6 +12,7 @@ from app.models.scan import Scan
 def seed():
     """Seed comprehensive dataset for PoshanScan so supervisor dashboard is fully populated."""
     Base.metadata.create_all(bind=engine)
+    run_migrations(engine)
     db = SessionLocal()
 
     try:
@@ -159,6 +161,7 @@ def seed():
                     scan = Scan(
                         child_id=child.id,
                         worker_id=worker_id,
+                        age_category="child_6_59m",
                         muac_estimate_mm=muac,
                         risk_band=band,
                         confidence_score=conf,
@@ -168,6 +171,30 @@ def seed():
                         created_at=scan_time,
                     )
                     db.add(scan)
+
+            # Add a few adult demo scans to verify that adult scans are tracked and filtered properly
+            adult_scans = [
+                {"muac": 245.0, "band": "NORMAL", "conf": 0.94, "flags": []},
+                {"muac": 222.0, "band": "MAM", "conf": 0.88, "flags": ["Low contrast against arm surface"]},
+                {"muac": 204.0, "band": "SAM", "conf": 0.82, "flags": ["Severe Acute Malnutrition", "Motion blur detected"]},
+                {"muac": 255.0, "band": "NORMAL", "conf": 0.96, "flags": []},
+            ]
+            for a_idx, a_scan in enumerate(adult_scans):
+                scan_time = now - timedelta(hours=a_idx + 1)
+                db.add(
+                    Scan(
+                        child_id=child_records[0].id,
+                        worker_id=worker_ids[0],
+                        age_category="adult",
+                        muac_estimate_mm=a_scan["muac"],
+                        risk_band=a_scan["band"],
+                        confidence_score=a_scan["conf"],
+                        quality_flags=a_scan["flags"],
+                        sync_status="synced",
+                        captured_at=scan_time.isoformat(),
+                        created_at=scan_time,
+                    )
+                )
             db.commit()
 
         print("[+] Comprehensive database seeding completed!")
