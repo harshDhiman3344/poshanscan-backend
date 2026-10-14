@@ -21,7 +21,7 @@ from app.schemas.dashboard import (
     FlaggedScan,
 )
 
-router = APIRouter(prefix="/dashboard", tags=["Supervisor Dashboard"])
+router = APIRouter(tags=["Supervisor Dashboard"])
 
 
 def apply_age_filter(query, age_category: Optional[str]):

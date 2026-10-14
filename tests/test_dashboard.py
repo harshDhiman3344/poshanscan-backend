@@ -106,3 +106,32 @@ def test_dashboard_flagged_age_category(client, supervisor_token):
     if len(records) > 0:
         assert "age_category" in records[0]
         assert records[0]["age_category"] in ["child_6_59m", "adult"]
+
+
+def test_supervisor_dashboard_prefixed_routes(client, supervisor_token):
+    # Verify all /supervisor/dashboard/... endpoints return 200 OK
+    headers = {"Authorization": f"Bearer {supervisor_token}"}
+    
+    r_ov = client.get("/supervisor/dashboard/overview", headers=headers)
+    assert r_ov.status_code == 200
+    assert "total_screenings" in r_ov.json()
+
+    r_tr = client.get("/supervisor/dashboard/trends?days=14", headers=headers)
+    assert r_tr.status_code == 200
+    assert "points" in r_tr.json()
+
+    r_loc = client.get("/supervisor/dashboard/locations", headers=headers)
+    assert r_loc.status_code == 200
+    assert isinstance(r_loc.json(), list)
+
+    r_wrk = client.get("/supervisor/dashboard/workers", headers=headers)
+    assert r_wrk.status_code == 200
+    assert isinstance(r_wrk.json(), list)
+
+    r_flg = client.get("/supervisor/dashboard/flagged", headers=headers)
+    assert r_flg.status_code == 200
+    assert isinstance(r_flg.json(), list)
+
+    r_exp = client.get("/supervisor/dashboard/export", headers=headers)
+    assert r_exp.status_code == 200
+    assert r_exp.headers["content-type"].startswith("text/csv")

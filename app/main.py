@@ -11,6 +11,7 @@ from app.routers import (
     scans_router,
     sync_router,
     dashboard_router,
+    supervisor_router,
 )
 
 logging.basicConfig(
@@ -82,7 +83,12 @@ def health_check():
 
 # Include all functional routers
 app.include_router(auth_router)
+app.include_router(supervisor_router)
 app.include_router(children_router)
 app.include_router(scans_router)
 app.include_router(sync_router)
-app.include_router(dashboard_router)
+
+# Supervisor Dashboard endpoints (primary prefix requested: /supervisor/dashboard)
+app.include_router(dashboard_router, prefix="/supervisor/dashboard")
+# Backward-compatible alias (legacy prefix: /dashboard)
+app.include_router(dashboard_router, prefix="/dashboard")

@@ -3,6 +3,7 @@ from app.routers.children import router as children_router
 from app.routers.scans import router as scans_router
 from app.routers.sync import router as sync_router
 from app.routers.dashboard import router as dashboard_router
+from app.routers.supervisor import router as supervisor_router
 
 __all__ = [
     "auth_router",
@@ -10,4 +11,5 @@ __all__ = [
     "scans_router",
     "sync_router",
     "dashboard_router",
+    "supervisor_router",
 ]
