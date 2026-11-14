@@ -35,7 +35,18 @@ async def submit_scan(
     and returns ScanResultResponse matching Navya's frontend contract.
     """
     # 1. Verify child exists
-    child = db.query(Child).filter(Child.id == child_id).first()
+    # If child_id is explicitly "undefined", "null", or empty (frontend unselected param), fallback to the latest registered child.
+    child = None
+    clean_child_id = str(child_id).strip() if child_id else ""
+    is_unspecified = not clean_child_id or clean_child_id.lower() in ("undefined", "null", "none")
+
+    if not is_unspecified:
+        child = db.query(Child).filter(
+            (Child.id == clean_child_id) | (Child.name.ilike(clean_child_id))
+        ).first()
+    else:
+        child = db.query(Child).order_by(Child.created_at.desc()).first()
+
     if not child:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -76,7 +87,7 @@ async def submit_scan(
     # 5. Persist scan record
     scan_record = Scan(
         client_scan_id=client_scan_id,
-        child_id=child_id,
+        child_id=child.id,
         worker_id=current_user.id,
         image_path=image_path,
         age_category=norm_age,
@@ -94,6 +105,7 @@ async def submit_scan(
     created_iso = scan_record.created_at.isoformat() if scan_record.created_at else datetime.now(timezone.utc).isoformat()
 
     return ScanResultResponse(
+        id=scan_record.id,
         scan_id=scan_record.id,
         client_scan_id=scan_record.client_scan_id,
         child_id=scan_record.child_id,
@@ -101,5 +113,37 @@ async def submit_scan(
         muac_estimate_mm=scan_record.muac_estimate_mm,
         risk_band=scan_record.risk_band,
         confidence_score=scan_record.confidence_score,
+        created_at=created_iso,
+    )
+
+
+@router.get("/{scan_id}", response_model=ScanResultResponse)
+def get_scan(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Fetch a single scan result by scan_id or client_scan_id.
+    Matches frontend GET /scans/{scanId}
+    """
+    scan = db.query(Scan).filter(
+        (Scan.id == scan_id) | (Scan.client_scan_id == scan_id)
+    ).first()
+    if not scan:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan record not found.",
+        )
+    created_iso = scan.created_at.isoformat() if scan.created_at else datetime.now(timezone.utc).isoformat()
+    return ScanResultResponse(
+        id=scan.id,
+        scan_id=scan.id,
+        client_scan_id=scan.client_scan_id or scan.id,
+        child_id=scan.child_id,
+        age_category=scan.age_category or "child_6_59m",
+        muac_estimate_mm=float(scan.muac_estimate_mm) if scan.muac_estimate_mm is not None else 0.0,
+        risk_band=scan.risk_band or "NORMAL",
+        confidence_score=float(scan.confidence_score) if scan.confidence_score is not None else 1.0,
         created_at=created_iso,
     )

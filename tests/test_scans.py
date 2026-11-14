@@ -97,3 +97,43 @@ def test_submit_scan_default_child(client, worker_token):
     assert res["age_category"] == "child_6_59m"
     # Child scale MUAC between 105mm and 135mm
     assert res["muac_estimate_mm"] < 150.0
+
+
+def test_submit_scan_fallback_undefined_child(client, worker_token):
+    fake_image = io.BytesIO(b"fallback child image bytes")
+    data = {
+        "child_id": "undefined",
+        "worker_id": "worker-uuid-001",
+        "client_scan_id": "client-scan-fallback-001",
+    }
+    files = {
+        "image": ("test_fallback.jpg", fake_image, "image/jpeg"),
+    }
+    response = client.post(
+        "/scans",
+        data=data,
+        files=files,
+        headers={"Authorization": f"Bearer {worker_token}"},
+    )
+    assert response.status_code == 200
+    res = response.json()
+    assert "scan_id" in res
+    assert "id" in res
+    assert res["id"] == res["scan_id"]
+    # Should resolve to the fallback child in DB
+    assert res["child_id"] is not None
+    assert len(res["child_id"]) > 0
+
+
+def test_get_scan_by_id(client, worker_token):
+    # Fetch scan previously submitted
+    response = client.get(
+        "/scans/client-scan-fallback-001",
+        headers={"Authorization": f"Bearer {worker_token}"},
+    )
+    assert response.status_code == 200
+    res = response.json()
+    assert res["client_scan_id"] == "client-scan-fallback-001"
+    assert "id" in res
+    assert "scan_id" in res
+    assert res["age_category"] == "child_6_59m"

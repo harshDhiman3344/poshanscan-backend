@@ -8,6 +8,9 @@ def test_search_children(client, worker_token):
     assert len(items) >= 1
     assert items[0]["name"] == "Aarav Kumar"
     assert items[0]["village"] == "Rampur"
+    assert "id" in items[0]
+    assert "child_id" in items[0]
+    assert items[0]["id"] == items[0]["child_id"]
 
 
 def test_register_child(client, worker_token):
@@ -27,3 +30,5 @@ def test_register_child(client, worker_token):
     data = response.json()
     assert data["name"] == "Diya Sharma"
     assert "child_id" in data
+    assert "id" in data
+    assert data["id"] == data["child_id"]

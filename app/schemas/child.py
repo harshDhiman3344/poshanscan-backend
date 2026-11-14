@@ -11,6 +11,7 @@ class ChildCreate(BaseModel):
 
 
 class ChildResponse(BaseModel):
+    id: str
     child_id: str
     name: str
     dob: str

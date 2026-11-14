@@ -37,6 +37,7 @@ def search_children(
     results = query.limit(30).all()
     return [
         ChildResponse(
+            id=c.id,
             child_id=c.id,
             name=c.name,
             dob=c.dob,
@@ -72,6 +73,7 @@ def register_child(
     db.refresh(new_child)
 
     return ChildResponse(
+        id=new_child.id,
         child_id=new_child.id,
         name=new_child.name,
         dob=new_child.dob,
@@ -95,6 +97,7 @@ def get_child(
             detail="Child not found",
         )
     return ChildResponse(
+        id=child.id,
         child_id=child.id,
         name=child.name,
         dob=child.dob,

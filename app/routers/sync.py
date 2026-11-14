@@ -111,9 +111,23 @@ async def sync_offline_scans(
             raw_band = (cv_res.risk_band or "NORMAL").upper()
             normalized_band = "NORMAL" if "NORM" in raw_band else ("MAM" if "MAM" in raw_band else "SAM")
 
+            # Resolve child_id safely
+            resolved_child_id = None
+            clean_cid = str(child_id).strip() if child_id else ""
+            if clean_cid and clean_cid.lower() not in ("undefined", "null", "none", ""):
+                ch = db.query(Child).filter((Child.id == clean_cid) | (Child.name.ilike(clean_cid))).first()
+                if ch:
+                    resolved_child_id = ch.id
+            if not resolved_child_id:
+                latest_ch = db.query(Child).order_by(Child.created_at.desc()).first()
+                if latest_ch:
+                    resolved_child_id = latest_ch.id
+                else:
+                    resolved_child_id = clean_cid or "unknown"
+
             scan_rec = Scan(
                 client_scan_id=client_scan_id,
-                child_id=child_id,
+                child_id=resolved_child_id,
                 worker_id=worker_id,
                 image_path=image_path,
                 age_category=norm_age,

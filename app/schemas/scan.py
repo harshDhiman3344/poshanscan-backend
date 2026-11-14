@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class ScanResultResponse(BaseModel):
+    id: Optional[str] = None
     scan_id: str
     client_scan_id: Optional[str] = None
     child_id: str
