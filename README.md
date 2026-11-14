@@ -35,14 +35,31 @@ Designed and built by **Harsh Dhiman (Backend & System Integration Engineer)**.
 - **Profile:** `GET /auth/me` (Returns current authenticated user details).
 
 ### 2. Frontline Worker Endpoints (Navya - Worker PWA)
-- **`GET /children/search?q={query}`**: Search children by name, guardian, village, or ID.
+- **`GET /children/search?q={query}`**: Search children by name, guardian, village, or ID. Returns scan status (`has_child_scan`, `has_adult_scan`, and list of non-sensitive `scans` summaries) so the worker app knows if a screening has already been performed.
+- **`GET /children/{child_id}/scan-status?age_category={cat}`**: Authenticated endpoint to check if a person has already been scanned for a category before opening the camera / capture flow.
 - **`POST /children`**: Register new child profile.
 - **`POST /scans`**: Online single scan.
   - Form fields: `image` (file), `child_id`, `worker_id`, `reference_type`, `reference_size_mm`, `age_category` (`child_6_59m` or `adult`, default: `child_6_59m`).
-  - Forwards to CV service and returns `ScanResultResponse`.
+  - **Single Photo Policy:** Enforces at most one submitted scan photo per person and age category across all workers/devices (atomic database constraint).
+  - **Conflict Response (HTTP 409):** If a scan already exists for that person and age category, the submission is rejected with `HTTP 409 Conflict`:
+    ```json
+    {
+      "error": "scan_already_exists",
+      "detail": "scan_already_exists",
+      "message": "A scan for this person and age category (child_6_59m) already exists.",
+      "scan_id": "existing-scan-uuid",
+      "child_id": "child-uuid",
+      "age_category": "child_6_59m",
+      "status": "synced",
+      "created_at": "2026-11-14T17:00:00Z"
+    }
+    ```
+    Existing scans and their photos remain 100% untouched and unchanged.
+- **`GET /scans/{scan_id}`**: Fetch single scan result details for worker result screen.
 - **`POST /sync`**: Offline batch sync.
   - Multipart: `metadata` (JSON array of scan items including `age_category`), `images` (matching photos).
   - Handles idempotency via `client_scan_id`.
+  - Rejects duplicate items for already-scanned persons with item-level `error: "scan_already_exists"`.
 
 ### 3. Supervisor Dashboard Endpoints (Dhruv - Supervisor Portal)
 Primary endpoints are prefixed with `/supervisor/dashboard/...` (legacy `/dashboard/...` remains active as an alias):

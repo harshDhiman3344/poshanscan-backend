@@ -1,11 +1,14 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, String, Float, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Float, DateTime, ForeignKey, JSON, UniqueConstraint
 from app.core.database import Base
 
 
 class Scan(Base):
     __tablename__ = "scans"
+    __table_args__ = (
+        UniqueConstraint("child_id", "age_category", name="uq_scans_child_age_category"),
+    )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     client_scan_id = Column(String(64), index=True, nullable=True)  # Idempotency key from client

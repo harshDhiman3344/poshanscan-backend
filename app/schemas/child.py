@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -10,6 +10,15 @@ class ChildCreate(BaseModel):
     village: Optional[str] = None
 
 
+class ChildScanSummary(BaseModel):
+    scan_id: str
+    age_category: str
+    status: str
+    created_at: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ChildResponse(BaseModel):
     id: str
     child_id: str
@@ -18,5 +27,21 @@ class ChildResponse(BaseModel):
     gender: str
     guardian_name: Optional[str] = None
     village: Optional[str] = None
+    has_child_scan: bool = False
+    has_adult_scan: bool = False
+    scans: List[ChildScanSummary] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ChildScanStatusResponse(BaseModel):
+    child_id: str
+    has_scanned: bool = False
+    already_scanned: bool = False
+    existing_scan_id: Optional[str] = None
+    age_category: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[str] = None
+    scans: List[ChildScanSummary] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

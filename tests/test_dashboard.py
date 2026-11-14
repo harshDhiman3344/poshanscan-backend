@@ -54,19 +54,31 @@ def test_dashboard_export_csv(client, supervisor_token):
 
 def test_dashboard_overview_age_filtering(client, supervisor_token, worker_token):
     import io
-    # Submit an adult scan and a child scan
-    client.post(
+    # Register dedicated child for dashboard filtering tests
+    reg = client.post(
+        "/children",
+        json={"name": "Dash Filter Child", "dob": "2024-07-01", "gender": "M", "village": "Rampur"},
+        headers={"Authorization": f"Bearer {worker_token}"},
+    )
+    assert reg.status_code == 201
+    dash_child_id = reg.json()["id"]
+
+    # Submit an adult scan and a child scan for this child
+    r_ad = client.post(
         "/scans",
-        data={"child_id": "child-uuid-001", "worker_id": "worker-uuid-001", "age_category": "adult"},
+        data={"child_id": dash_child_id, "worker_id": "worker-uuid-001", "age_category": "adult"},
         files={"image": ("adult.jpg", io.BytesIO(b"adult"), "image/jpeg")},
         headers={"Authorization": f"Bearer {worker_token}"},
     )
-    client.post(
+    assert r_ad.status_code == 200
+
+    r_ch = client.post(
         "/scans",
-        data={"child_id": "child-uuid-001", "worker_id": "worker-uuid-001", "age_category": "child_6_59m"},
+        data={"child_id": dash_child_id, "worker_id": "worker-uuid-001", "age_category": "child_6_59m"},
         files={"image": ("child.jpg", io.BytesIO(b"child"), "image/jpeg")},
         headers={"Authorization": f"Bearer {worker_token}"},
     )
+    assert r_ch.status_code == 200
 
     # Default overview (child only)
     res_default = client.get(

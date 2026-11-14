@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Form, File, UploadFile, HTTPException, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -56,6 +57,52 @@ async def submit_scan(
     # Normalize age category: "adult" or "child_6_59m"
     norm_age = "adult" if str(age_category).strip().lower() == "adult" else "child_6_59m"
 
+    # 1.1 Idempotency check: if exact client_scan_id already exists, return existing record
+    if client_scan_id:
+        existing_client_scan = db.query(Scan).filter(Scan.client_scan_id == client_scan_id).first()
+        if existing_client_scan:
+            created_iso = (
+                existing_client_scan.created_at.isoformat()
+                if existing_client_scan.created_at
+                else datetime.now(timezone.utc).isoformat()
+            )
+            return ScanResultResponse(
+                id=existing_client_scan.id,
+                scan_id=existing_client_scan.id,
+                client_scan_id=existing_client_scan.client_scan_id,
+                child_id=existing_client_scan.child_id,
+                age_category=existing_client_scan.age_category or "child_6_59m",
+                muac_estimate_mm=existing_client_scan.muac_estimate_mm,
+                risk_band=existing_client_scan.risk_band,
+                confidence_score=existing_client_scan.confidence_score,
+                created_at=created_iso,
+            )
+
+    # 1.2 Enforce at most one submitted scan photo per person and age category
+    existing_scan = db.query(Scan).filter(
+        Scan.child_id == child.id,
+        Scan.age_category == norm_age,
+    ).first()
+    if existing_scan:
+        created_iso = (
+            existing_scan.created_at.isoformat()
+            if existing_scan.created_at
+            else datetime.now(timezone.utc).isoformat()
+        )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error": "scan_already_exists",
+                "detail": "scan_already_exists",
+                "message": f"A scan for this person and age category ({norm_age}) already exists.",
+                "scan_id": existing_scan.id,
+                "child_id": existing_scan.child_id,
+                "age_category": existing_scan.age_category,
+                "status": existing_scan.sync_status,
+                "created_at": created_iso,
+            },
+        )
+
     # 2. Read image content and save to storage
     image_bytes = await image.read()
     image_path = save_upload_file(image_bytes, image.filename or "scan.jpg")
@@ -84,7 +131,7 @@ async def submit_scan(
     else:
         normalized_band = "SAM"
 
-    # 5. Persist scan record
+    # 5. Persist scan record atomically
     scan_record = Scan(
         client_scan_id=client_scan_id,
         child_id=child.id,
@@ -98,9 +145,35 @@ async def submit_scan(
         sync_status="synced",
         captured_at=captured_at,
     )
-    db.add(scan_record)
-    db.commit()
-    db.refresh(scan_record)
+    try:
+        db.add(scan_record)
+        db.commit()
+        db.refresh(scan_record)
+    except IntegrityError:
+        db.rollback()
+        # Atomic conflict resolution if a concurrent submission committed first
+        conflict_scan = db.query(Scan).filter(
+            Scan.child_id == child.id,
+            Scan.age_category == norm_age,
+        ).first()
+        created_iso = (
+            conflict_scan.created_at.isoformat()
+            if conflict_scan and conflict_scan.created_at
+            else datetime.now(timezone.utc).isoformat()
+        )
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error": "scan_already_exists",
+                "detail": "scan_already_exists",
+                "message": f"A scan for this person and age category ({norm_age}) already exists.",
+                "scan_id": conflict_scan.id if conflict_scan else "unknown",
+                "child_id": child.id,
+                "age_category": norm_age,
+                "status": conflict_scan.sync_status if conflict_scan else "synced",
+                "created_at": created_iso,
+            },
+        )
 
     created_iso = scan_record.created_at.isoformat() if scan_record.created_at else datetime.now(timezone.utc).isoformat()
 

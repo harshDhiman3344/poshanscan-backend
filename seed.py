@@ -120,6 +120,30 @@ def seed():
                 "Low contrast against arm surface",
             ]
 
+            # Ensure we have enough distinct children so each has at most one scan per category
+            total_needed = 160
+            if len(child_records) < total_needed:
+                first_names = ["Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Sai", "Reyansh", "Ayaan", "Krishna", "Ishaan",
+                               "Diya", "Saanvi", "Ananya", "Aadhya", "Pari", "Anika", "Navya", "Angel", "Myra", "Riya"]
+                last_names = ["Kumar", "Sharma", "Verma", "Patel", "Singh", "Yadav", "Gupta", "Das", "Joshi", "Nair"]
+                for idx in range(len(child_records) + 1, total_needed + 1):
+                    v = locations[(idx - 1) % len(locations)]["village"]
+                    c_name = f"{random.choice(first_names)} {random.choice(last_names)} ({idx})"
+                    g_name = f"Guardian {idx}"
+                    c_new = Child(
+                        name=c_name,
+                        dob=f"2023-{(idx % 12) + 1:02d}-{(idx % 28) + 1:02d}",
+                        gender="M" if idx % 2 == 0 else "F",
+                        guardian_name=g_name,
+                        village=v,
+                        registered_by=random.choice(worker_ids),
+                    )
+                    db.add(c_new)
+                db.commit()
+                child_records = db.query(Child).all()
+
+            child_iter = iter(child_records)
+
             # Generate screenings across days: 0 (today) through 13 days ago
             for days_ago in range(14):
                 # Today gets 16-20 scans across all 4 workers; earlier days get 8-12 scans
@@ -129,7 +153,10 @@ def seed():
                 day_workers = worker_ids[:] if days_ago == 0 else [random.choice(worker_ids) for _ in range(num_scans)]
 
                 for i in range(num_scans):
-                    child = random.choice(child_records)
+                    try:
+                        child = next(child_iter)
+                    except StopIteration:
+                        break
                     worker_id = day_workers[i] if days_ago == 0 and i < len(day_workers) else random.choice(worker_ids)
                     
                     # Distribute realistic MUAC values: 65% Normal, 22% MAM, 13% SAM
@@ -172,7 +199,7 @@ def seed():
                     )
                     db.add(scan)
 
-            # Add a few adult demo scans to verify that adult scans are tracked and filtered properly
+            # Add a few adult demo scans to verify that adult scans are tracked and filtered properly (one per distinct child)
             adult_scans = [
                 {"muac": 245.0, "band": "NORMAL", "conf": 0.94, "flags": []},
                 {"muac": 222.0, "band": "MAM", "conf": 0.88, "flags": ["Low contrast against arm surface"]},
@@ -183,8 +210,8 @@ def seed():
                 scan_time = now - timedelta(hours=a_idx + 1)
                 db.add(
                     Scan(
-                        child_id=child_records[0].id,
-                        worker_id=worker_ids[0],
+                        child_id=child_records[a_idx].id,
+                        worker_id=worker_ids[a_idx % len(worker_ids)],
                         age_category="adult",
                         muac_estimate_mm=a_scan["muac"],
                         risk_band=a_scan["band"],

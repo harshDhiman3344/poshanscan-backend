@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Form, File, UploadFile, status
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
@@ -61,7 +62,7 @@ async def sync_offline_scans(
         raw_age = item.get("age_category", "child_6_59m") or "child_6_59m"
         norm_age = "adult" if str(raw_age).strip().lower() == "adult" else "child_6_59m"
 
-        # Check for idempotency: if this client_scan_id already exists in DB, return existing record
+        # 1. Check for idempotency: if this exact client_scan_id already exists in DB, return existing record
         if client_scan_id:
             existing = db.query(Scan).filter(Scan.client_scan_id == client_scan_id).first()
             if existing:
@@ -84,7 +85,39 @@ async def sync_offline_scans(
                 )
                 continue
 
-        # Find corresponding image
+        # 2. Resolve child_id safely
+        resolved_child_id = None
+        clean_cid = str(child_id).strip() if child_id else ""
+        if clean_cid and clean_cid.lower() not in ("undefined", "null", "none", ""):
+            ch = db.query(Child).filter((Child.id == clean_cid) | (Child.name.ilike(clean_cid))).first()
+            if ch:
+                resolved_child_id = ch.id
+        if not resolved_child_id:
+            latest_ch = db.query(Child).order_by(Child.created_at.desc()).first()
+            if latest_ch:
+                resolved_child_id = latest_ch.id
+            else:
+                resolved_child_id = clean_cid or "unknown"
+
+        # 3. Enforce at most one submitted scan photo per person and age category
+        existing_scan_cat = db.query(Scan).filter(
+            Scan.child_id == resolved_child_id,
+            Scan.age_category == norm_age,
+        ).first()
+        if existing_scan_cat:
+            results.append(
+                SyncScanItemResponse(
+                    client_scan_id=client_scan_id,
+                    scan_id=existing_scan_cat.id,
+                    child_id=resolved_child_id,
+                    age_category=norm_age,
+                    error="scan_already_exists",
+                    message=f"A scan for this person and age category ({norm_age}) already exists.",
+                )
+            )
+            continue
+
+        # 4. Find corresponding image
         img = image_map.get(client_scan_id) or image_map.get(f"index_{idx}")
         if not img:
             results.append(
@@ -111,20 +144,6 @@ async def sync_offline_scans(
             raw_band = (cv_res.risk_band or "NORMAL").upper()
             normalized_band = "NORMAL" if "NORM" in raw_band else ("MAM" if "MAM" in raw_band else "SAM")
 
-            # Resolve child_id safely
-            resolved_child_id = None
-            clean_cid = str(child_id).strip() if child_id else ""
-            if clean_cid and clean_cid.lower() not in ("undefined", "null", "none", ""):
-                ch = db.query(Child).filter((Child.id == clean_cid) | (Child.name.ilike(clean_cid))).first()
-                if ch:
-                    resolved_child_id = ch.id
-            if not resolved_child_id:
-                latest_ch = db.query(Child).order_by(Child.created_at.desc()).first()
-                if latest_ch:
-                    resolved_child_id = latest_ch.id
-                else:
-                    resolved_child_id = clean_cid or "unknown"
-
             scan_rec = Scan(
                 client_scan_id=client_scan_id,
                 child_id=resolved_child_id,
@@ -138,9 +157,27 @@ async def sync_offline_scans(
                 sync_status="synced",
                 captured_at=captured_at,
             )
-            db.add(scan_rec)
-            db.commit()
-            db.refresh(scan_rec)
+            try:
+                db.add(scan_rec)
+                db.commit()
+                db.refresh(scan_rec)
+            except IntegrityError:
+                db.rollback()
+                existing_scan_cat = db.query(Scan).filter(
+                    Scan.child_id == resolved_child_id,
+                    Scan.age_category == norm_age,
+                ).first()
+                results.append(
+                    SyncScanItemResponse(
+                        client_scan_id=client_scan_id,
+                        scan_id=existing_scan_cat.id if existing_scan_cat else "unknown",
+                        child_id=resolved_child_id,
+                        age_category=norm_age,
+                        error="scan_already_exists",
+                        message=f"A scan for this person and age category ({norm_age}) already exists.",
+                    )
+                )
+                continue
 
             created_iso = (
                 scan_rec.created_at.isoformat()
