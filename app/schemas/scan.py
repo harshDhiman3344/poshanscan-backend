@@ -12,6 +12,8 @@ class ScanResultResponse(BaseModel):
     risk_band: str  # NORMAL, MAM, SAM
     confidence_score: float
     created_at: str
+    image_url: Optional[str] = None
+    photo_url: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -35,5 +37,7 @@ class SyncScanItemResponse(BaseModel):
     risk_band: Optional[str] = None
     confidence_score: Optional[float] = None
     created_at: Optional[str] = None
+    image_url: Optional[str] = None
+    photo_url: Optional[str] = None
     error: Optional[str] = None
     message: Optional[str] = None

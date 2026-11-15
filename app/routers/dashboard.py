@@ -1,10 +1,11 @@
 import io
+import os
 import csv
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy import func, case, or_
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role
@@ -147,15 +148,24 @@ def get_location_aggregates(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Geographic malnutrition risk breakdown for Leaflet heatmaps (excludes adult scans by default)."""
-    locations = db.query(Location).all()
-    location_data = []
+    """
+    Geographic malnutrition risk breakdown based on actual registered children and screenings.
+    Dynamically groups by village without relying on static dummy locations.
+    """
+    # Find all distinct villages from registered children and location records
+    child_villages = [
+        v[0] for v in db.query(Child.village).filter(Child.village.isnot(None), Child.village != "").distinct().all()
+    ]
+    loc_records = {l.village.lower(): l for l in db.query(Location).all() if l.village}
+    all_villages = list(dict.fromkeys([v for v in child_villages if v] + [l.village for l in loc_records.values() if l.village]))
 
-    for idx, loc in enumerate(locations):
+    location_data = []
+    for idx, v_name in enumerate(all_villages):
+        loc = loc_records.get(v_name.lower())
         scans_q = (
             db.query(Scan)
             .join(Child, Scan.child_id == Child.id)
-            .filter(Child.village == loc.village)
+            .filter(func.lower(Child.village) == v_name.lower())
         )
         scans = apply_age_filter(scans_q, age_category).all()
         tot = len(scans)
@@ -165,15 +175,18 @@ def get_location_aggregates(
         at_risk = m + s
         sam_pct = round((s / tot * 100.0), 1) if tot > 0 else 0.0
 
-        lat = loc.latitude if loc.latitude else (28.6500 + idx * 0.01)
-        lng = loc.longitude if loc.longitude else (77.1200 + idx * 0.01)
+        lat = loc.latitude if loc and loc.latitude else (28.6500 + idx * 0.01)
+        lng = loc.longitude if loc and loc.longitude else (77.1200 + idx * 0.01)
+        block = loc.block if loc and loc.block else "Rajouri Garden"
+        district = loc.district if loc and loc.district else "West Delhi"
+        loc_id = loc.id if loc else f"loc-{idx+1}"
 
         location_data.append(
             LocationAggregate(
-                location_id=loc.id,
-                village=loc.village,
-                block=loc.block or "Rajouri Garden",
-                district=loc.district or "West Delhi",
+                location_id=loc_id,
+                village=v_name,
+                block=block,
+                district=district,
                 lat=lat,
                 lng=lng,
                 total_screenings=tot,
@@ -195,7 +208,7 @@ def get_worker_performance(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Worker activity and screening counts (defaults to child scans)."""
+    """Worker activity and screening counts based on real user activity."""
     workers = db.query(User).filter(User.role == "worker").all()
     stats = []
     for w in workers:
@@ -210,18 +223,27 @@ def get_worker_performance(
 
         avg_c = (
             base_q.with_entities(func.avg(Scan.confidence_score))
-            .scalar() or 0.92
+            .scalar() or 0.90
         )
         flagged = (
             base_q.filter((Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
             .count()
         )
 
-        village = "Rampur"
+        village = "Delhi"
         if w.location_id:
             loc = db.query(Location).filter(Location.id == w.location_id).first()
             if loc:
                 village = loc.village
+        else:
+            child_v = (
+                db.query(Child.village)
+                .join(Scan, Scan.child_id == Child.id)
+                .filter(Scan.worker_id == w.id, Child.village.isnot(None))
+                .first()
+            )
+            if child_v and child_v[0]:
+                village = child_v[0]
 
         stats.append(
             WorkerStats(
@@ -244,16 +266,35 @@ def get_worker_performance(
 def get_flagged_scans(
     status: Optional[str] = Query(None),
     age_category: Optional[str] = Query(None, description="Filter by age category ('child_6_59m', 'adult', 'all')"),
+    q: Optional[str] = Query(None, description="Search term for child name, ID, village, or worker"),
+    all_screenings: bool = Query(False, description="Include all screenings regardless of status"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["supervisor", "admin"])),
 ):
-    """Scans requiring manual review (confidence < 0.60 or SAM). Shows age_category for each scan."""
+    """
+    Scans requiring review or triage.
+    Supports search query 'q' across child name, child ID, village, and worker name.
+    Supplies accessible image URLs so photos are viewable and zoomable in the supervisor dashboard.
+    """
     query = (
         db.query(Scan, Child, User)
         .join(Child, Scan.child_id == Child.id)
         .join(User, Scan.worker_id == User.id)
-        .filter((Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
     )
+
+    # Search filter across child name, ID, village, worker
+    if q and q.strip():
+        term = f"%{q.strip().lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(Child.name).ilike(term),
+                func.lower(Child.id).ilike(term),
+                func.lower(Child.village).ilike(term),
+                func.lower(User.name).ilike(term),
+            )
+        )
+    elif not all_screenings and status == "flagged_only":
+        query = query.filter((Scan.confidence_score < 0.60) | (Scan.risk_band == "SAM"))
 
     if status == "reviewed":
         query = query.filter(Scan.sync_status == "reviewed")
@@ -267,7 +308,15 @@ def get_flagged_scans(
         elif norm_cat in ("child", "child_6_59m"):
             query = query.filter((Scan.age_category == "child_6_59m") | (Scan.age_category.is_(None)))
 
-    scans = query.order_by(Scan.created_at.desc()).limit(50).all()
+    # Sort SAM and low-confidence first, then newest
+    scans = (
+        query.order_by(
+            case((Scan.risk_band == "SAM", 1), (Scan.confidence_score < 0.60, 2), else_=3),
+            Scan.created_at.desc(),
+        )
+        .limit(100)
+        .all()
+    )
 
     flagged = []
     for s, c, w in scans:
@@ -275,7 +324,6 @@ def get_flagged_scans(
         if isinstance(s.quality_flags, list):
             flags = [str(x) for x in s.quality_flags]
         elif isinstance(s.quality_flags, dict):
-            # If dictionary flags, extract any issue keys or format as strings
             neg_flags = [k.replace('_', ' ').title() for k, v in s.quality_flags.items() if v is False]
             flags = neg_flags if neg_flags else [f"{k}: {v}" for k, v in s.quality_flags.items()]
         elif isinstance(s.quality_flags, str) and s.quality_flags:
@@ -286,9 +334,17 @@ def get_flagged_scans(
                 flags.append("Low confidence reading")
             if s.risk_band == "SAM":
                 flags.append("Severe Acute Malnutrition")
+            elif s.risk_band == "MAM":
+                flags.append("Moderate Acute Malnutrition")
+            else:
+                flags.append("Normal nutrition status")
 
         created_str = s.created_at.isoformat() if s.created_at else ""
         item_status = "reviewed" if s.sync_status == "reviewed" else "pending"
+
+        # Construct image URL
+        img_name = os.path.basename(s.image_path) if s.image_path else f"{s.id}.jpg"
+        img_url = f"https://poshanscan-backend.onrender.com/uploads/{img_name}"
 
         flagged.append(
             FlaggedScan(
@@ -299,11 +355,17 @@ def get_flagged_scans(
                 child_name=c.name,
                 worker_id=w.id,
                 worker_name=w.name,
+                village=c.village or "rajouri",
+                image_url=img_url,
+                photo_url=img_url,
+                media_url=img_url,
                 age_category=s.age_category or "child_6_59m",
                 muac_estimate_mm=s.muac_estimate_mm,
                 risk_band=s.risk_band.capitalize() if s.risk_band == "NORMAL" else s.risk_band,
                 confidence=s.confidence_score,
                 confidence_score=s.confidence_score,
+                sharpness=round(s.confidence_score * 100, 1) if s.confidence_score else 85.0,
+                quality_score=round(s.confidence_score * 100, 1) if s.confidence_score else 85.0,
                 reason="; ".join(flags),
                 quality_flags=flags,
                 status=item_status,

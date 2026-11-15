@@ -64,11 +64,17 @@ class FlaggedScan(BaseModel):
     child_name: Optional[str] = None
     worker_id: Optional[str] = None
     worker_name: str
+    village: Optional[str] = None
+    image_url: Optional[str] = None
+    photo_url: Optional[str] = None
+    media_url: Optional[str] = None
     age_category: str = "child_6_59m"
     muac_estimate_mm: float
     risk_band: str
     confidence: float
     confidence_score: Optional[float] = None
+    sharpness: Optional[float] = None
+    quality_score: Optional[float] = None
     reason: Optional[str] = None
     quality_flags: List[str] = []
     status: str = "pending"

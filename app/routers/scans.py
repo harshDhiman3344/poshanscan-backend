@@ -177,6 +177,10 @@ async def submit_scan(
 
     created_iso = scan_record.created_at.isoformat() if scan_record.created_at else datetime.now(timezone.utc).isoformat()
 
+    import os
+    img_name = os.path.basename(scan_record.image_path) if scan_record.image_path else f"{scan_record.id}.jpg"
+    img_url = f"https://poshanscan-backend.onrender.com/uploads/{img_name}"
+
     return ScanResultResponse(
         id=scan_record.id,
         scan_id=scan_record.id,
@@ -187,6 +191,8 @@ async def submit_scan(
         risk_band=scan_record.risk_band,
         confidence_score=scan_record.confidence_score,
         created_at=created_iso,
+        image_url=img_url,
+        photo_url=img_url,
     )
 
 
@@ -209,6 +215,10 @@ def get_scan(
             detail="Scan record not found.",
         )
     created_iso = scan.created_at.isoformat() if scan.created_at else datetime.now(timezone.utc).isoformat()
+    import os
+    img_name = os.path.basename(scan.image_path) if scan.image_path else f"{scan.id}.jpg"
+    img_url = f"https://poshanscan-backend.onrender.com/uploads/{img_name}"
+
     return ScanResultResponse(
         id=scan.id,
         scan_id=scan.id,
@@ -219,4 +229,6 @@ def get_scan(
         risk_band=scan.risk_band or "NORMAL",
         confidence_score=float(scan.confidence_score) if scan.confidence_score is not None else 1.0,
         created_at=created_iso,
+        image_url=img_url,
+        photo_url=img_url,
     )

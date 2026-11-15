@@ -147,3 +147,48 @@ def test_supervisor_dashboard_prefixed_routes(client, supervisor_token):
     r_exp = client.get("/supervisor/dashboard/export", headers=headers)
     assert r_exp.status_code == 200
     assert r_exp.headers["content-type"].startswith("text/csv")
+
+
+def test_dashboard_flagged_search_and_image_url(client, supervisor_token, worker_token):
+    import io
+    # Register child named "Dhruv Test"
+    reg = client.post(
+        "/children",
+        json={"name": "Dhruv Test", "dob": "2023-01-14", "gender": "M", "village": "rajouri"},
+        headers={"Authorization": f"Bearer {worker_token}"},
+    )
+    assert reg.status_code == 201
+    child_id = reg.json()["id"]
+
+    # Submit scan with photo
+    sub = client.post(
+        "/scans",
+        data={"child_id": child_id, "worker_id": "worker-uuid-001", "age_category": "child_6_59m"},
+        files={"image": ("dhruv_arm.jpg", io.BytesIO(b"fake_jpeg_content"), "image/jpeg")},
+        headers={"Authorization": f"Bearer {worker_token}"},
+    )
+    assert sub.status_code == 200
+    scan_id = sub.json()["scan_id"]
+    assert "image_url" in sub.json()
+    assert "/uploads/" in sub.json()["image_url"]
+
+    # Search for Dhruv in supervisor flagged queue
+    resp = client.get(
+        "/supervisor/dashboard/flagged?q=dhruv",
+        headers={"Authorization": f"Bearer {supervisor_token}"},
+    )
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) >= 1
+    dhruv_scan = next(i for i in items if "dhruv" in i["child_name"].lower())
+    assert dhruv_scan["child_id"] == child_id
+    assert dhruv_scan["image_url"] is not None
+    assert "/uploads/" in dhruv_scan["image_url"]
+    assert dhruv_scan["village"] == "rajouri"
+
+
+def test_uploads_endpoint(client):
+    # Test uploaded image / fallback JPEG route
+    resp = client.get("/uploads/test_photo.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"

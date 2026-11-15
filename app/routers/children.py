@@ -65,6 +65,17 @@ def search_children(
             )
             for s in c_scans
         ]
+        
+        latest_scan = None
+        if c_scans:
+            latest_scan = max(c_scans, key=lambda x: x.created_at.timestamp() if x.created_at else 0)
+
+        img_url = None
+        if latest_scan and latest_scan.image_path:
+            import os
+            fname = os.path.basename(latest_scan.image_path)
+            img_url = f"https://poshanscan-backend.onrender.com/uploads/{fname}"
+
         items.append(
             ChildResponse(
                 id=c.id,
@@ -77,6 +88,12 @@ def search_children(
                 has_child_scan=has_child,
                 has_adult_scan=has_adult,
                 scans=summaries,
+                image_url=img_url,
+                photo_url=img_url,
+                latest_scan_id=latest_scan.id if latest_scan else None,
+                muac_estimate_mm=latest_scan.muac_estimate_mm if latest_scan else None,
+                risk_band=latest_scan.risk_band if latest_scan else None,
+                confidence_score=latest_scan.confidence_score if latest_scan else None,
             )
         )
     return items

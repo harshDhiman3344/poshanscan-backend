@@ -185,6 +185,10 @@ async def sync_offline_scans(
                 else datetime.now(timezone.utc).isoformat()
             )
 
+            import os
+            img_name = os.path.basename(scan_rec.image_path) if scan_rec.image_path else f"{scan_rec.id}.jpg"
+            img_url = f"https://poshanscan-backend.onrender.com/uploads/{img_name}"
+
             results.append(
                 SyncScanItemResponse(
                     client_scan_id=client_scan_id,
@@ -195,6 +199,8 @@ async def sync_offline_scans(
                     risk_band=scan_rec.risk_band,
                     confidence_score=scan_rec.confidence_score,
                     created_at=created_iso,
+                    image_url=img_url,
+                    photo_url=img_url,
                 )
             )
         except CVInferenceError as exc:

@@ -30,6 +30,12 @@ class ChildResponse(BaseModel):
     has_child_scan: bool = False
     has_adult_scan: bool = False
     scans: List[ChildScanSummary] = Field(default_factory=list)
+    image_url: Optional[str] = None
+    photo_url: Optional[str] = None
+    latest_scan_id: Optional[str] = None
+    muac_estimate_mm: Optional[float] = None
+    risk_band: Optional[str] = None
+    confidence_score: Optional[float] = None
 
     model_config = ConfigDict(from_attributes=True)
 

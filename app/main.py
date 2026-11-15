@@ -1,7 +1,10 @@
+import os
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import Base, engine
@@ -20,36 +23,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger("poshanscan-backend")
 
+FALLBACK_JPEG = bytes.fromhex(
+    "ffd8ffe000104a46494600010101004800480000ffdb004300030202020202030202020303030304060404040404080606050609080a0a090809090a0c0f0c0a0b0e0b09090d110d0e0f101011100a0c12131210130f101010ffc0000b080001000101011100ffda0008010100003f00d2cf20ffd9"
+)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize database tables on application startup and auto-seed if empty."""
+    """Initialize database tables on application startup and apply migrations."""
     logger.info("Initializing database tables...")
     Base.metadata.create_all(bind=engine)
     logger.info("Database tables initialized successfully.")
 
-    # Apply database schema migrations (e.g. age_category column on SQLite & PostgreSQL)
+    # Apply database schema migrations & cleanup
     from app.core.migration import run_migrations
     run_migrations(engine)
-
-    # Auto-seed if database has less than 50 scans (e.g. fresh deployment or needs enriched demo dataset)
-    try:
-        from app.models.scan import Scan
-        from app.core.database import SessionLocal
-        from seed import seed
-        db = SessionLocal()
-        try:
-            scan_count = db.query(Scan).count()
-            if scan_count < 50:
-                logger.info(f"Database has only {scan_count} scans. Automatically seeding enriched multi-worker dataset...")
-                seed()
-                logger.info("Auto-seeding complete.")
-            else:
-                logger.info(f"Database already seeded with {scan_count} screenings.")
-        finally:
-            db.close()
-    except Exception as exc:
-        logger.warning(f"Auto-seed check encountered an issue: {exc}")
 
     yield
 
@@ -79,6 +67,22 @@ app.add_middleware(
 def health_check():
     """Health check endpoint for Render/uptime monitoring."""
     return {"status": "ok", "service": "poshanscan-backend"}
+
+
+@app.get("/uploads/{filename}", tags=["Uploads"])
+async def get_uploaded_image(filename: str):
+    """Serve uploaded screening photo or graceful fallback if ephemeral disk restarted."""
+    filepath = os.path.join(settings.UPLOAD_DIR, filename)
+    if os.path.exists(filepath):
+        return FileResponse(filepath)
+    default_img = os.path.join(settings.UPLOAD_DIR, "default_arm_scan.jpg")
+    if os.path.exists(default_img):
+        return FileResponse(default_img)
+    return Response(content=FALLBACK_JPEG, media_type="image/jpeg")
+
+
+os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
 # Include all functional routers

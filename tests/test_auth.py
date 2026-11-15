@@ -60,3 +60,37 @@ def test_supervisor_login_worker_forbidden(client):
     )
     assert response.status_code == 403
     assert "Only supervisors and administrators" in response.json()["detail"]
+
+
+def test_register_worker_success(client):
+    response = client.post(
+        "/auth/register",
+        json={"phone": "9999900001", "password": "pass123worker", "role": "worker", "name": "Geeta Sharma"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert "access_token" in data
+    assert "token" in data
+    assert data["role"] == "worker"
+    assert data["name"] == "Geeta Sharma"
+    assert "user_id" in data
+
+
+def test_register_worker_default_name(client):
+    response = client.post(
+        "/auth/register",
+        json={"phone": "9999900002", "password": "pass123worker"},
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Worker 0002"
+    assert data["role"] == "worker"
+
+
+def test_register_duplicate_phone_rejected(client):
+    response = client.post(
+        "/auth/register",
+        json={"phone": "9876543210", "password": "anypassword"},
+    )
+    assert response.status_code == 409
+    assert "already exists" in response.json()["detail"]
