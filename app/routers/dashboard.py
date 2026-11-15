@@ -152,12 +152,12 @@ def get_location_aggregates(
     Geographic malnutrition risk breakdown based on actual registered children and screenings.
     Dynamically groups by village without relying on static dummy locations.
     """
-    # Find all distinct villages from registered children and location records
+    # Only include villages where actual registered children exist
     child_villages = [
         v[0] for v in db.query(Child.village).filter(Child.village.isnot(None), Child.village != "").distinct().all()
     ]
     loc_records = {l.village.lower(): l for l in db.query(Location).all() if l.village}
-    all_villages = list(dict.fromkeys([v for v in child_villages if v] + [l.village for l in loc_records.values() if l.village]))
+    all_villages = list(dict.fromkeys([v for v in child_villages if v]))
 
     location_data = []
     for idx, v_name in enumerate(all_villages):

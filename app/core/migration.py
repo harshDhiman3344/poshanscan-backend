@@ -11,6 +11,14 @@ def cleanup_dummy_data(conn):
     preserving real accounts and the Dhruv screening record.
     """
     try:
+        # 1. Clean dummy seed locations
+        conn.execute(text("DELETE FROM locations WHERE id IN ('loc-001', 'loc-002', 'loc-003', 'loc-004', 'loc-005', 'loc-006')"))
+        conn.commit()
+
+        # 2. Clean dummy seed workers
+        conn.execute(text("DELETE FROM users WHERE phone IN ('9876543211', '9876543212', '9876543213')"))
+        conn.commit()
+
         # Check if dummy seed children exist (e.g. Diya Sharma, Sunita Kumar, Kabir Singh)
         has_dummy_seed = conn.execute(
             text("SELECT COUNT(*) FROM children WHERE name IN ('Diya Sharma', 'Vihaan Gupta', 'Kabir Singh', 'Meera Sen')")
